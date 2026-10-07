@@ -13,6 +13,8 @@ use crate::{
     },
     ui_session_interface::{InvokeUiSession, Session},
 };
+#[cfg(target_env = "ohos")]
+use super::ohos_voice_input::OhosVoiceInput;
 
 // Empirical no-data window before exposing the restart reconnect state to the UI.
 // Restart msgbox text is kept as a legacy UI fallback; Flutter handles the type as a control event.
@@ -92,6 +94,8 @@ pub struct Remote<T: InvokeUiSession> {
     sender: mpsc::UnboundedSender<Data>,
     // Stop sending local audio to remote client.
     stop_voice_call_sender: Option<std::sync::mpsc::Sender<()>>,
+    #[cfg(target_env = "ohos")]
+    voice_input: Option<OhosVoiceInput>,
     voice_call_request_timestamp: Option<NonZeroI64>,
     read_jobs: Vec<fs::TransferJob>,
     write_jobs: Vec<fs::TransferJob>,
@@ -168,6 +172,8 @@ impl<T: InvokeUiSession> Remote<T> {
             data_count: Arc::new(AtomicUsize::new(0)),
             video_format: CodecFormat::Unknown,
             stop_voice_call_sender: None,
+            #[cfg(target_env = "ohos")]
+            voice_input: None,
             voice_call_request_timestamp: None,
             elevation_requested: false,
             peer_info: Default::default(),
@@ -598,6 +604,10 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 
     fn stop_voice_call(&mut self) {
+        #[cfg(target_env = "ohos")]
+        {
+            self.voice_input = None;
+        }
         let voice_call_sender = std::mem::replace(&mut self.stop_voice_call_sender, None);
         if let Some(stopper) = voice_call_sender {
             let _ = stopper.send(());
@@ -1118,10 +1128,10 @@ impl<T: InvokeUiSession> Remote<T> {
             Data::NewVoiceCall => {
                 #[cfg(target_env = "ohos")]
                 {
-                    // Voice call stays closed on HarmonyOS: the frontend offers no entry
-                    // point and the platform cannot carry the call.
-                    self.handler
-                        .on_voice_call_closed("Voice call is not supported on HarmonyOS");
+                    let msg = new_voice_call_request(true);
+                    self.voice_call_request_timestamp = NonZeroI64::new(msg.voice_call_request().req_timestamp);
+                    allow_err!(peer.send(&msg).await);
+                    self.handler.on_voice_call_waiting();
                 }
                 #[cfg(not(target_env = "ohos"))]
                 {
@@ -1137,10 +1147,22 @@ impl<T: InvokeUiSession> Remote<T> {
             }
             Data::CloseVoiceCall => {
                 self.stop_voice_call();
+                #[cfg(target_env = "ohos")]
+                {
+                    self.voice_call_request_timestamp = None;
+                }
                 let msg = new_voice_call_request(false);
                 self.handler
                     .on_voice_call_closed("Closed manually by the peer");
                 allow_err!(peer.send(&msg).await);
+            }
+            #[cfg(target_env = "ohos")]
+            Data::VoicePcm(pcm) => {
+                if let Some(input) = &mut self.voice_input {
+                    for msg in input.encode(&pcm) {
+                        allow_err!(peer.send(&msg).await);
+                    }
+                }
             }
             Data::ResetDecoder(display) => match display {
                 Some(display) => {
@@ -2302,6 +2324,10 @@ impl<T: InvokeUiSession> Remote<T> {
                             allow_err!(sender.send(()));
                             self.handler.on_voice_call_closed("");
                         }
+                        #[cfg(target_env = "ohos")]
+                        if self.voice_input.take().is_some() {
+                            self.handler.on_voice_call_closed("");
+                        }
                     }
                 }
                 Some(message::Union::VoiceCallResponse(response)) => {
@@ -2312,8 +2338,24 @@ impl<T: InvokeUiSession> Remote<T> {
                         } else {
                             if response.accepted {
                                 // The peer accepted the voice call.
-                                self.handler.on_voice_call_started();
-                                self.stop_voice_call_sender = self.start_voice_call();
+                                #[cfg(target_env = "ohos")]
+                                match OhosVoiceInput::new() {
+                                    Ok(input) => {
+                                        self.voice_input = Some(input);
+                                        allow_err!(peer.send(&OhosVoiceInput::format_message()).await);
+                                        self.handler.on_voice_call_started();
+                                    }
+                                    Err(error) => {
+                                        log::error!("Failed to start OHOS voice input: {error:?}");
+                                        allow_err!(peer.send(&new_voice_call_request(false)).await);
+                                        self.handler.on_voice_call_closed("");
+                                    }
+                                }
+                                #[cfg(not(target_env = "ohos"))]
+                                {
+                                    self.handler.on_voice_call_started();
+                                    self.stop_voice_call_sender = self.start_voice_call();
+                                }
                             } else {
                                 // The peer refused the voice call.
                                 self.handler.on_voice_call_closed("");

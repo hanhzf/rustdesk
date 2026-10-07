@@ -101,8 +101,6 @@ mod pa_impl {
         RESTARTING.store(false, Ordering::SeqCst);
         #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
         let mut stream = crate::ipc::connect(1000, "_pa").await?;
-        #[cfg(target_env = "ohos")]
-        log::info!("OHOS host audio capture is not provided");
         let mut encoder = AudioEncoder::new(Encoder::new(
             crate::platform::PA_SAMPLE_RATE,
             Stereo,
@@ -170,7 +168,16 @@ mod pa_impl {
                 hbb_common::sleep(0.1).await;
             }
             #[cfg(target_env = "ohos")]
-            hbb_common::sleep(0.1).await;
+            if let Some(mobile_data) = crate::platform::ohos::take_host_audio_f32_stereo() {
+                let aligned = align_to_32_if_needed(&mobile_data);
+                let bytes = aligned.as_deref().unwrap_or(&mobile_data[..]);
+                let data = unsafe {
+                    std::slice::from_raw_parts::<f32>(bytes.as_ptr() as _, bytes.len() / 4)
+                };
+                send_f32(data, &mut encoder, &sp);
+            } else {
+                hbb_common::sleep(0.1).await;
+            }
         }
         Ok(())
     }

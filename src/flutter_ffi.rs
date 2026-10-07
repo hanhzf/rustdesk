@@ -1732,6 +1732,13 @@ pub fn session_close_voice_call(session_id: SessionID) {
     }
 }
 
+#[cfg(target_env = "ohos")]
+pub fn session_send_voice_pcm(session_id: SessionID, pcm: Vec<u8>) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.send_voice_pcm(pcm);
+    }
+}
+
 pub fn session_get_conn_token(session_id: SessionID) -> SyncReturn<Option<String>> {
     if let Some(session) = sessions::get_session_by_session_id(&session_id) {
         SyncReturn(session.get_conn_token())

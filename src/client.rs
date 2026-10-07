@@ -107,6 +107,8 @@ pub mod helper;
 pub mod io_loop;
 #[cfg(target_env = "ohos")]
 pub mod ohos_audio;
+#[cfg(target_env = "ohos")]
+mod ohos_voice_input;
 pub mod screenshot;
 
 pub const MILLI1: Duration = Duration::from_millis(1);
@@ -5059,6 +5061,8 @@ pub enum Data {
     ElevateWithLogon(String, String),
     NewVoiceCall,
     CloseVoiceCall,
+    #[cfg(target_env = "ohos")]
+    VoicePcm(Vec<u8>),
     ContinueInsecureConnection,
     ResetDecoder(Option<usize>),
     PauseVideo(bool),

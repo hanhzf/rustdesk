@@ -134,6 +134,7 @@ lazy_static::lazy_static! {
     static ref CLIENT_CLIPBOARD_CONN_IDS: Mutex<HashMap<String, i32>> = Default::default();
     static ref HOST_INPUT_EVENTS: Mutex<VecDeque<HostInputEvent>> = Default::default();
     static ref HOST_POINTER_POSITION: Mutex<(i32, i32)> = Default::default();
+    static ref HOST_AUDIO: Mutex<VecDeque<Vec<u8>>> = Default::default();
     static ref HOST_RECEIVED_CLIPBOARD: Mutex<Option<MultiClipboards>> = Default::default();
     static ref HOST_SERVER: Mutex<Option<crate::server::ServerPtr>> = Default::default();
     static ref HOST_CLIPBOARD_FILE_ROOT: Mutex<Option<PathBuf>> = Default::default();
@@ -146,6 +147,7 @@ static HOST_ENABLED: AtomicBool = AtomicBool::new(false);
 static HOST_CLIPBOARD_AVAILABLE: AtomicBool = AtomicBool::new(false);
 static HOST_DISPLAY_ID: AtomicU64 = AtomicU64::new(0);
 const HOST_INPUT_EVENTS_CAPACITY: usize = 256;
+const HOST_AUDIO_FRAMES_CAPACITY: usize = 16;
 
 /// Frontend sentinel that selects the controlled-host clipboard channel instead of one
 /// UI session.
@@ -503,6 +505,21 @@ pub fn poll_host_input_event() -> Option<HostInputEvent> {
 
 pub fn poll_host_input_event_json() -> Option<String> {
     poll_host_input_event().and_then(|event| serde_json::to_string(&event).ok())
+}
+
+pub fn push_host_audio_f32_stereo(data: &[u8]) {
+    if data.is_empty() || data.len() % std::mem::size_of::<f32>() != 0 {
+        return;
+    }
+    let mut frames = HOST_AUDIO.lock().unwrap();
+    if frames.len() >= HOST_AUDIO_FRAMES_CAPACITY {
+        frames.pop_front();
+    }
+    frames.push_back(data.to_vec());
+}
+
+pub(crate) fn take_host_audio_f32_stereo() -> Option<Vec<u8>> {
+    HOST_AUDIO.lock().unwrap().pop_front()
 }
 
 pub fn start_host() -> bool {
