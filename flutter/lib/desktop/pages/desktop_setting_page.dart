@@ -1397,6 +1397,7 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
       ...directIp(context),
       whitelist(),
       idWhitelist(),
+      if (isMacOS) autoAcceptVoiceInput(),
       ...autoDisconnect(context),
       _OptionCheckBox(context, 'keep-awake-during-incoming-sessions-label',
           kOptionKeepAwakeDuringIncomingSessions,
@@ -1598,6 +1599,57 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
             }
           : null,
     ).marginOnly(left: _kCheckBoxLeftMargin);
+  }
+
+  Widget autoAcceptVoiceInput() {
+    final key = 'auto-accept-voice-from-ids';
+    return _SubButton('Auto-accept voice from device IDs', () async {
+      final current = await bind.mainGetOption(key: key);
+      final controller =
+          TextEditingController(text: current.split(',').join('\n'));
+      String error = '';
+      gFFI.dialogManager.show((setState, close, context) {
+        return CustomAlertDialog(
+          title: Text(translate('Auto-accept voice from device IDs')),
+          content: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(translate('voice_auto_accept_tip')),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                maxLines: null,
+                autofocus: true,
+                decoration:
+                    InputDecoration(errorText: error.isEmpty ? null : error),
+              ).workaroundFreezeLinuxMint(),
+            ],
+          ),
+          actions: [
+            dialogButton('Cancel', onPressed: close, isOutline: true),
+            dialogButton('Clear', onPressed: () async {
+              await bind.mainSetOption(key: key, value: '');
+              close();
+            }, isOutline: true),
+            dialogButton('OK', onPressed: () async {
+              final ids = controller.text
+                  .split(RegExp(r'[\s,;]+'))
+                  .where((id) => id.isNotEmpty)
+                  .toList();
+              if (ids.any((id) =>
+                  id.contains('*') ||
+                  id.runes.any((c) => c <= 0x1f || (c >= 0x7f && c <= 0x9f)))) {
+                setState(() => error = translate('Invalid ID'));
+                return;
+              }
+              await bind.mainSetOption(key: key, value: ids.join(','));
+              close();
+            }),
+          ],
+          onCancel: close,
+        );
+      });
+    }, !locked && !isOptionFixed(key));
   }
 
   Widget hide_cm(bool enabled) {

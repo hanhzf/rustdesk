@@ -69,6 +69,8 @@ pub mod input_service {
 }
 
 mod connection;
+#[cfg(target_os = "macos")]
+mod voice_input;
 mod login_failure_check;
 pub(crate) mod port_forward_mux;
 pub mod display_service;

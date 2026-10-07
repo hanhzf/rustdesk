@@ -5,10 +5,11 @@ set -euo pipefail
 app_path=$1
 identity=$2
 entitlements=$3
+signing_mode=${4:-release}
 
-sign_args=(--force --options runtime --sign "$identity")
-if [[ "$identity" != "-" ]]; then
-  sign_args+=(--timestamp)
+sign_args=(--force --sign "$identity")
+if [[ "$identity" != "-" && "$signing_mode" != "local" ]]; then
+  sign_args+=(--options runtime --timestamp)
 fi
 
 frameworks_path="$app_path/Contents/Frameworks"

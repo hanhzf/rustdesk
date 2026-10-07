@@ -423,6 +423,8 @@ pub struct Connection {
     from_switch: bool,
     voice_call_request_timestamp: Option<NonZeroI64>,
     voice_calling: bool,
+    #[cfg(target_os = "macos")]
+    voice_call_uses_host_input: bool,
     options_in_login: Option<OptionMessage>,
     #[cfg(not(any(target_os = "ios")))]
     pressed_modifiers: HashSet<rdev::Key>,
@@ -629,6 +631,8 @@ impl Connection {
             audio_sender: None,
             voice_call_request_timestamp: None,
             voice_calling: false,
+            #[cfg(target_os = "macos")]
+            voice_call_uses_host_input: false,
             options_in_login: None,
             #[cfg(not(any(target_os = "ios")))]
             pressed_modifiers: Default::default(),
@@ -2331,6 +2335,20 @@ impl Connection {
         self.audio && !self.disable_audio
     }
 
+    fn accepts_incoming_voice_audio(&self) -> bool {
+        if !self.disable_audio {
+            return true;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.voice_calling && !self.voice_call_uses_host_input
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+
     #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
     fn file_transfer_enabled(&self) -> bool {
         self.file && self.enable_file_transfer
@@ -3918,7 +3936,7 @@ impl Connection {
                         _ => {}
                     },
                     Some(misc::Union::AudioFormat(format)) => {
-                        if !self.disable_audio {
+                        if self.accepts_incoming_voice_audio() {
                             // Drop the audio sender previously.
                             drop(std::mem::replace(&mut self.audio_sender, None));
                             self.audio_sender = Some(start_audio_thread());
@@ -4019,7 +4037,7 @@ impl Connection {
                     _ => {}
                 },
                 Some(message::Union::AudioFrame(frame)) => {
-                    if !self.disable_audio {
+                    if self.accepts_incoming_voice_audio() {
                         if let Some(sender) = &self.audio_sender {
                             allow_err!(sender.send(MediaData::AudioFrame(Box::new(frame))));
                         } else {
@@ -4035,7 +4053,18 @@ impl Connection {
                             NonZeroI64::new(request.req_timestamp)
                                 .unwrap_or(NonZeroI64::new(get_time()).unwrap()),
                         );
-                        // Notify the connection manager.
+                        #[cfg(target_os = "macos")]
+                        if !self.voice_calling && super::voice_input::should_auto_accept(
+                            self.authorized,
+                            self.is_authed_remote_conn(),
+                            self.audio,
+                            &self.lr.my_id,
+                        ) {
+                            self.respond_to_voice_call(true, false).await;
+                        } else {
+                            self.send_to_cm(Data::VoiceCallIncoming);
+                        }
+                        #[cfg(not(target_os = "macos"))]
                         self.send_to_cm(Data::VoiceCallIncoming);
                     } else {
                         self.close_voice_call().await;
@@ -4816,19 +4845,34 @@ impl Connection {
     }
 
     pub async fn handle_voice_call(&mut self, accepted: bool) {
+        self.respond_to_voice_call(accepted, true).await;
+    }
+
+    async fn respond_to_voice_call(&mut self, accepted: bool, use_host_input: bool) {
         if let Some(ts) = self.voice_call_request_timestamp.take() {
             let msg = new_voice_call_response(ts.get(), accepted);
             if accepted {
-                crate::audio_service::set_voice_call_input_device(
-                    crate::get_default_sound_input(),
-                    false,
-                );
+                if use_host_input {
+                    crate::audio_service::set_voice_call_input_device(
+                        crate::get_default_sound_input(),
+                        false,
+                    );
+                }
+                #[cfg(target_os = "macos")]
+                if !use_host_input {
+                    self.voice_calling = true;
+                    self.voice_call_uses_host_input = false;
+                }
                 self.send_to_cm(Data::StartVoiceCall);
             } else {
                 self.send_to_cm(Data::CloseVoiceCall("".to_owned()));
             }
             self.send(msg).await;
             self.voice_calling = accepted;
+            #[cfg(target_os = "macos")]
+            {
+                self.voice_call_uses_host_input = accepted && use_host_input;
+            }
             if self.is_authed_view_camera_conn() {
                 if let Some(s) = self.server.upgrade() {
                     s.write().unwrap().subscribe(
@@ -4844,6 +4888,12 @@ impl Connection {
     }
 
     pub async fn close_voice_call(&mut self) {
+        #[cfg(target_os = "macos")]
+        if self.voice_call_uses_host_input {
+            crate::audio_service::set_voice_call_input_device(None, true);
+            self.voice_call_uses_host_input = false;
+        }
+        #[cfg(not(target_os = "macos"))]
         crate::audio_service::set_voice_call_input_device(None, true);
         // Notify the connection manager that the voice call has been closed.
         self.send_to_cm(Data::CloseVoiceCall("".to_owned()));
@@ -5249,6 +5299,12 @@ impl Connection {
         //
         // We can add a (Vec<conn_id>, input device) to avoid this.
         // But it's not necessary now and we have to consider two audio services(client, server).
+        #[cfg(target_os = "macos")]
+        if self.voice_call_uses_host_input {
+            crate::audio_service::set_voice_call_input_device(None, true);
+            self.voice_call_uses_host_input = false;
+        }
+        #[cfg(not(target_os = "macos"))]
         crate::audio_service::set_voice_call_input_device(None, true);
         log::info!("#{} Connection closed: {}", self.inner.id(), reason);
         if lock

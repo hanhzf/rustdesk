@@ -57,6 +57,8 @@ pub const OPTION_ENABLE_LAN_DISCOVERY: &str = "enable-lan-discovery";
 pub const OPTION_DIRECT_ACCESS_PORT: &str = "direct-access-port";
 pub const OPTION_WHITELIST: &str = "whitelist";
 pub const OPTION_ID_WHITELIST: &str = "id-whitelist";
+// Empty by default. Exact peer IDs only; never treat a wildcard as authorization.
+pub const OPTION_AUTO_ACCEPT_VOICE_FROM_IDS: &str = "auto-accept-voice-from-ids";
 pub const OPTION_ALLOW_AUTO_DISCONNECT: &str = "allow-auto-disconnect";
 pub const OPTION_AUTO_DISCONNECT_TIMEOUT: &str = "auto-disconnect-timeout";
 pub const OPTION_ALLOW_ONLY_CONN_WINDOW_OPEN: &str = "allow-only-conn-window-open";
