@@ -636,23 +636,13 @@ const MOUSE_ACTIVE_DISTANCE: i32 = 5;
 
 static RECORD_CURSOR_POS_RUNNING: AtomicBool = AtomicBool::new(false);
 
-// https://github.com/rustdesk/rustdesk/issues/9729
-// We need to do some special handling for macOS when using the legacy mode.
-#[cfg(target_os = "macos")]
-static LAST_KEY_LEGACY_MODE: AtomicBool = AtomicBool::new(true);
 // We use enigo to
 // 1. Simulate mouse events
 // 2. Simulate the legacy mode key events
 // 3. Simulate the functioin key events, like LockScreen
 #[inline]
 #[cfg(target_os = "macos")]
-fn enigo_ignore_flags() -> bool {
-    !LAST_KEY_LEGACY_MODE.load(Ordering::SeqCst)
-}
-#[inline]
-#[cfg(target_os = "macos")]
 fn set_last_legacy_mode(v: bool) {
-    LAST_KEY_LEGACY_MODE.store(v, Ordering::SeqCst);
     ENIGO.lock().unwrap().set_ignore_flags(!v);
 }
 
@@ -1289,7 +1279,18 @@ pub fn handle_mouse_simulation_(evt: &MouseEvent, conn: i32) {
     let evt_type = evt.mask & MOUSE_TYPE_MASK;
     let mut en = ENIGO.lock().unwrap();
     #[cfg(target_os = "macos")]
-    en.set_ignore_flags(enigo_ignore_flags());
+    {
+        // Mouse packets carry the current modifiers in every keyboard mode.
+        // Inherited Quartz flags can retain a device-specific Command/Alt bit
+        // after key-up, so prepare flags before both correction and mouse input.
+        en.set_ignore_flags(false);
+        en.reset_flag();
+        for ck in &evt.modifiers {
+            if let Some(key) = KEY_MAP.get(&ck.value()) {
+                en.add_flag(key);
+            }
+        }
+    }
     #[cfg(not(target_os = "macos"))]
     let mut to_release = Vec::new();
     if evt_type == MOUSE_TYPE_DOWN {
