@@ -1250,7 +1250,7 @@ impl Connection {
             rdev::set_keyboard_extra_info(enigo::ENIGO_INPUT_EXTRA_VALUE);
         }
         #[cfg(target_os = "macos")]
-        reset_input_ondisconn();
+        init_input_onconn();
         loop {
             match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(v) => match v {

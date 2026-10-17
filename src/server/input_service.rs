@@ -1605,16 +1605,19 @@ pub fn handle_key(evt: &KeyEvent) {
 
 #[cfg(target_os = "macos")]
 #[inline]
-fn reset_input() {
+fn init_input_if_needed() {
     unsafe {
         let _lock = VIRTUAL_INPUT_MTX.lock();
-        VIRTUAL_INPUT_STATE = VirtualInputState::new();
+        // Keep the same event source while other input connections may hold keys.
+        if VIRTUAL_INPUT_STATE.is_none() {
+            VIRTUAL_INPUT_STATE = VirtualInputState::new();
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-pub fn reset_input_ondisconn() {
-    QUEUE.exec_async(reset_input);
+pub fn init_input_onconn() {
+    QUEUE.exec_async(init_input_if_needed);
 }
 
 fn sim_rdev_rawkey_position(code: KeyCode, keydown: bool) {
